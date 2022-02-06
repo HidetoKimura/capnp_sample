@@ -19,11 +19,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+#include "rpc-helper.h"
 #include "calculator.capnp.h"
 #include <kj/debug.h>
-#include <capnp/ez-rpc.h>
+#include <kj/async-unix.h>
 #include <capnp/message.h>
 #include <iostream>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 typedef unsigned int uint;
 
@@ -196,8 +200,16 @@ int main(int argc, const char* argv[]) {
     return 1;
   }
 
+  std::string endpoint(argv[1]);
+  std::string word("unix:");
+  auto pos = endpoint.find(word);
+  if(pos != std::string::npos) {
+    auto path = endpoint.substr(pos + word.size()).c_str();
+    unlink(path);
+  }
+
   // Set up a server.
-  capnp::EzRpcServer server(kj::heap<CalculatorImpl>(), argv[1]);
+  RpcHelperServer server(kj::heap<CalculatorImpl>(), argv[1]);
 
   // Write the port number to stdout, in case it was chosen automatically.
   auto& waitScope = server.getWaitScope();
@@ -205,11 +217,35 @@ int main(int argc, const char* argv[]) {
   if (port == 0) {
     // The address format "unix:/path/to/socket" opens a unix domain socket,
     // in which case the port will be zero.
-    std::cout << "Listening on Unix socket..." << std::endl;
+    std::cout << "Listening on Unix socket..." << endpoint << std::endl;
   } else {
-    std::cout << "Listening on port " << port << "..." << std::endl;
+    std::cout << "Listening on port " << port << "..." << endpoint << std::endl;
   }
 
-  // Run forever, accepting connections and handling requests.
-  kj::NEVER_DONE.wait(waitScope);
+  int sock_;
+  KJ_SYSCALL(sock_ = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0));
+  auto sock = kj::AutoCloseFd(sock_);
+
+  struct sockaddr_un addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sun_family = AF_UNIX;
+  strcpy(addr.sun_path, "/tmp/sample-server.sock");
+  unlink(addr.sun_path);
+  KJ_SYSCALL(bind(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)));
+
+  auto& ev_port = server.getUnixEventPort();
+  kj::UnixEventPort::FdObserver observer(ev_port, sock, kj::UnixEventPort::FdObserver::OBSERVE_READ);
+
+  for (;;) {
+    observer.whenBecomesReadable().then([&](){
+      char  data[256];
+      int32_t len;
+      KJ_SYSCALL(len = read(sock ,data,sizeof(data)));
+      if(len < sizeof(data)) {
+        data[len] = '\0';
+      }
+      std::cout << "len = " << len << ", read data =" << data << std::endl;
+    }).wait(waitScope);
+  }
+
 }

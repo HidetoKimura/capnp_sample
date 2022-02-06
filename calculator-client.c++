@@ -20,7 +20,7 @@
 // THE SOFTWARE.
 
 #include "calculator.capnp.h"
-#include <capnp/ez-rpc.h>
+#include "rpc-helper.h"
 #include <kj/debug.h>
 #include <math.h>
 #include <iostream>
@@ -47,7 +47,7 @@ int main(int argc, const char* argv[]) {
     return 1;
   }
 
-  capnp::EzRpcClient client(argv[1]);
+  RpcHelperClient client(argv[1]);
   Calculator::Client calculator = client.getMain<Calculator>();
 
   // Keep an eye on `waitScope`.  Whenever you see it used is a place where we
