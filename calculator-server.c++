@@ -28,8 +28,10 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <vector>
 
 typedef unsigned int uint;
+void promise_test(kj::WaitScope& waitScope);
 
 kj::Promise<double> readValue(Calculator::Value::Client value) {
   // Helper function to asynchronously call read() on a Calculator::Value and
@@ -168,9 +170,10 @@ private:
 
 class CalculatorImpl final: public Calculator::Server {
   // Implementation of the Calculator Cap'n Proto interface.
-
 public:
+  CalculatorImpl(int id) : id_(id) {}
   kj::Promise<void> evaluate(EvaluateContext context) override {
+    KJ_DBG(id_);
     return evaluateImpl(context.getParams().getExpression())
         .then([KJ_CPCAP(context)](double value) mutable {
       context.getResults().setValue(kj::heap<ValueImpl>(value));
@@ -179,16 +182,20 @@ public:
 
   kj::Promise<void> defFunction(DefFunctionContext context) override {
     auto params = context.getParams();
+    KJ_DBG(id_);
     context.getResults().setFunc(kj::heap<FunctionImpl>(
         params.getParamCount(), params.getBody()));
     return kj::READY_NOW;
   }
 
   kj::Promise<void> getOperator(GetOperatorContext context) override {
+    KJ_DBG(id_);
     context.getResults().setFunc(kj::heap<OperatorImpl>(
         context.getParams().getOp()));
     return kj::READY_NOW;
   }
+private:
+  int id_;
 };
 
 int main(int argc, const char* argv[]) {
@@ -199,7 +206,7 @@ int main(int argc, const char* argv[]) {
         ":PORT may be omitted to choose a port automatically." << std::endl;
     return 1;
   }
-
+  
   std::string endpoint(argv[1]);
   std::string word("unix:");
   auto pos = endpoint.find(word);
@@ -208,8 +215,19 @@ int main(int argc, const char* argv[]) {
     unlink(path);
   }
 
+  #if 0
+  KJ_TRC();
+  std::vector<capnp::Capability::Client> impl;
+  impl.push_back(kj::heap<CalculatorImpl>(1));
+  impl.push_back(kj::heap<CalculatorImpl>(2));
+  #endif
+
   // Set up a server.
-  RpcHelperServer server(kj::heap<CalculatorImpl>(), argv[1]);
+  RpcHelperServer server(kj::heap<CalculatorImpl>(0), argv[1]);
+  server.exportCap("CAP1", kj::heap<CalculatorImpl>(123));
+  server.exportCap("CAP2", kj::heap<CalculatorImpl>(456));
+
+  KJ_TRC();
 
   // Write the port number to stdout, in case it was chosen automatically.
   auto& waitScope = server.getWaitScope();
@@ -235,17 +253,72 @@ int main(int argc, const char* argv[]) {
 
   auto& ev_port = server.getUnixEventPort();
   kj::UnixEventPort::FdObserver observer(ev_port, sock, kj::UnixEventPort::FdObserver::OBSERVE_READ);
+  
+  promise_test(waitScope);
 
   for (;;) {
-    observer.whenBecomesReadable().then([&](){
+    kj::Promise<void> watcher = observer.whenBecomesReadable();
+    KJ_DBG(watcher.trace());
+    watcher.then([&](){
       char  data[256];
       int32_t len;
       KJ_SYSCALL(len = read(sock ,data,sizeof(data)));
       if(len < sizeof(data)) {
         data[len] = '\0';
       }
-      std::cout << "len = " << len << ", read data =" << data << std::endl;
+      std::cout << "len = " << len << ", read data = " << data << std::endl;
     }).wait(waitScope);
   }
 
+}
+
+void promise_test(kj::WaitScope& waitScope)
+{
+
+  kj::Promise<int> test1 = 123;
+  kj::Promise<int> test2 = test1.then([](int i){return 456;});
+  kj::Promise<int> test3 = test2.then([](int i){return 789;});
+
+  KJ_DBG(test3.trace());
+  KJ_DBG(test3.wait(waitScope));
+
+  kj::Promise<int> promise = kj::evalLater([&]() { return 123; });
+
+  auto fork = promise.fork();
+
+  KJ_ASSERT(!fork.hasBranches());
+  {
+    auto cancelBranch = fork.addBranch();
+    KJ_ASSERT(fork.hasBranches());
+  }
+  KJ_ASSERT(!fork.hasBranches());
+
+  auto branch1 = fork.addBranch().then([](int i) {
+    if(i == 123) {
+      return 456;
+    }
+    else {
+      return 0;
+    }
+  });
+  KJ_ASSERT(fork.hasBranches());
+
+  auto branch2 = fork.addBranch().then([](int i) {
+    if(i == 123) {
+      return 789;
+    }
+    else {
+      return 0;
+    }
+  });
+  KJ_ASSERT(fork.hasBranches());
+
+  {
+    auto releaseFork = kj::mv(fork);
+  }
+
+  KJ_DBG(branch1.wait(waitScope));
+  KJ_DBG(branch2.wait(waitScope));
+
+  return;
 }

@@ -24,6 +24,7 @@
 #include <capnp/rpc.h>
 #include <capnp/message.h>
 #include <kj/async-unix.h>
+#include <vector>
 
 struct sockaddr;
 
@@ -159,7 +160,11 @@ class RpcHelperServer {
   // The server counterpart to `RpcHelperClient`.  See `RpcHelperClient` for an example.
 
 public:
-  explicit RpcHelperServer(capnp::Capability::Client mainInterface, kj::StringPtr bindAddress,
+#if 0
+  explicit RpcHelperServer(std::vector<capnp::Capability::Client> mainInterfaces, kj::StringPtr bindAddress,
+                       capnp::uint defaultPort = 0, capnp::ReaderOptions readerOpts = capnp::ReaderOptions());
+#endif
+  explicit RpcHelperServer(capnp::Capability::Client mainInterfaces, kj::StringPtr bindAddress,
                        capnp::uint defaultPort = 0, capnp::ReaderOptions readerOpts = capnp::ReaderOptions());
   // Construct a new `RpcHelperServer` that binds to the given address.  An address of "*" means to
   // bind to all local addresses.

@@ -35,20 +35,24 @@ public:
     auto params = context.getParams().getParams();
     KJ_REQUIRE(params.size() == 2, "Wrong number of parameters.");
     context.getResults().setValue(pow(params[0], params[1]));
+    KJ_TRC();
     return kj::READY_NOW;
   }
 };
 
 int main(int argc, const char* argv[]) {
-  if (argc != 2) {
-    std::cerr << "usage: " << argv[0] << " HOST:PORT\n"
+  if (argc != 3) {
+    std::cerr << "usage: " << argv[0] << " HOST:PORT CAPNAME \n"
         "Connects to the Calculator server at the given address and "
         "does some RPCs." << std::endl;
     return 1;
   }
 
+  KJ_TRC("create RpcHelperClinet");
   RpcHelperClient client(argv[1]);
-  Calculator::Client calculator = client.getMain<Calculator>();
+  KJ_TRC("done RpcHelperClinet, get Capability from client.getMain.");
+//  Calculator::Client calculator = client.getMain<Calculator>();
+  Calculator::Client calculator = client.importCap(argv[2]).castAs<Calculator>();
 
   // Keep an eye on `waitScope`.  Whenever you see it used is a place where we
   // stop and wait for the server to respond.  If a line of code does not use
@@ -69,27 +73,38 @@ int main(int argc, const char* argv[]) {
     std::cout << "Evaluating a literal... ";
     std::cout.flush();
 
+    KJ_TRC("create request");
+
     // Set up the request.
     auto request = calculator.evaluateRequest();
 //    std::cout << request;
     request.getExpression().setLiteral(123);
-    KJ_DBG(request.getExpression());
+
+    KJ_TRC("create request done");
 
     // Send it, which returns a promise for the result (without blocking).
     auto evalPromise = request.send();
+
+    KJ_TRC("create evalPromise");
 
     // Using the promise, create a pipelined request to call read() on the
     // returned object, and then send that.
     auto readPromise = evalPromise.getValue().readRequest().send();
 
+    KJ_TRC("create readPromise");
+
     // Now that we've sent all the requests, wait for the response.  Until this
     // point, we haven't waited at all!
     auto response = readPromise.wait(waitScope);
+
+    KJ_TRC("done readPromise");
+
     KJ_ASSERT(response.getValue() == 123);
 
     std::cout << "PASS" << std::endl;
   }
 
+  #if 1
   {
     // Make a request to evaluate 123 + 45 - 67.
     //
@@ -102,13 +117,21 @@ int main(int argc, const char* argv[]) {
     std::cout << "Using add and subtract... ";
     std::cout.flush();
 
+    KJ_TRC("add");
+
     Calculator::Function::Client add = nullptr;
+
+    KJ_TRC("subtract");
+
     Calculator::Function::Client subtract = nullptr;
 
     {
       // Get the "add" function from the server.
       auto request = calculator.getOperatorRequest();
       request.setOp(Calculator::Operator::ADD);
+
+      KJ_TRC("ADD");
+
       add = request.send().getFunc();
     }
 
@@ -116,6 +139,9 @@ int main(int argc, const char* argv[]) {
       // Get the "subtract" function from the server.
       auto request = calculator.getOperatorRequest();
       request.setOp(Calculator::Operator::SUBTRACT);
+
+      KJ_TRC("SUBTRACT");
+
       subtract = request.send().getFunc();
     }
 
@@ -135,10 +161,17 @@ int main(int argc, const char* argv[]) {
 
     // Send the evaluate() request, read() the result, and wait for read() to
     // finish.
+
+      
+    KJ_TRC("request");
+
     auto evalPromise = request.send();
     auto readPromise = evalPromise.getValue().readRequest().send();
 
     auto response = readPromise.wait(waitScope);
+
+    KJ_TRC("readPromise");
+
     KJ_ASSERT(response.getValue() == 101);
 
     std::cout << "PASS" << std::endl;
@@ -163,6 +196,7 @@ int main(int argc, const char* argv[]) {
       // Get the "add" function from the server.
       auto request = calculator.getOperatorRequest();
       request.setOp(Calculator::Operator::ADD);
+      KJ_TRC("ADD");
       add = request.send().getFunc();
     }
 
@@ -170,6 +204,7 @@ int main(int argc, const char* argv[]) {
       // Get the "multiply" function from the server.
       auto request = calculator.getOperatorRequest();
       request.setOp(Calculator::Operator::MULTIPLY);
+      KJ_TRC("MULTIPLY");
       multiply = request.send().getFunc();
     }
 
@@ -205,6 +240,9 @@ int main(int argc, const char* argv[]) {
     // Now wait for the results.
     KJ_ASSERT(add3Promise.wait(waitScope).getValue() == 27);
     KJ_ASSERT(add5Promise.wait(waitScope).getValue() == 29);
+
+    KJ_TRC("(4 * 6) + 3 +  5");
+
 
     std::cout << "PASS" << std::endl;
   }
@@ -364,6 +402,7 @@ int main(int argc, const char* argv[]) {
 
     std::cout << "PASS" << std::endl;
   }
+  #endif
 
   return 0;
 }
